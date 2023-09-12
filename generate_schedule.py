@@ -3,12 +3,10 @@ import sys
 import os
 import re
 import xlrd
-import xlwt
+import openpyxl
 import logging
-import pandas as pd
+import xlsxwriter
 
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QApplication,
@@ -27,6 +25,7 @@ from PyQt5.QtWidgets import (
 TOTAL_WEEKS = 16
 COMPARE_DATE = '2023-09-01'
 LOG_FILE = 'error_log.txt'
+member_dict = {}
 
 
 # 初始化日志记录器
@@ -67,6 +66,8 @@ def create_empty_schedule():
 
 # 清空output文件夹
 def clear_output_folder(output_folder):
+    if not os.path.exists('./output'):
+        os.makedirs('./output')
     for file_name in os.listdir(output_folder):
         file_path = os.path.join(output_folder, file_name)
         try:
@@ -76,6 +77,7 @@ def clear_output_folder(output_folder):
                 shutil.rmtree(file_path)
         except Exception as e:
             print(f"Error deleting {file_path}: {e}")
+
 
 # 设置界面
 class SettingWindow(QMainWindow):
@@ -152,11 +154,15 @@ class PersonManagementWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels(['姓名', '性别', '校区'])
 
         self.confirm_button = QPushButton('确定')
-        self.confirm_button.clicked.connect(self.export_to_excel)
+        self.confirm_button.clicked.connect(self.make_dict)
+        # self.confirm_button.clicked.connect(self.export_to_excel)
+        # self.confirm_button.clicked.connect(self.update_style)
         self.confirm_button.clicked.connect(self.window_close)
 
         self.save_button = QPushButton('保存')
-        self.save_button.clicked.connect(self.export_to_excel)
+        self.save_button.clicked.connect(self.make_dict)
+        # self.save_button.clicked.connect(self.export_to_excel)
+        self.save_button.clicked.connect(self.print_dict)
 
         # 将组件添加到布局管理器中
         layout.addWidget(self.file_label)
@@ -171,6 +177,15 @@ class PersonManagementWindow(QMainWindow):
 
         # 设置QWidget为窗口的中央组件
         self.setCentralWidget(container)
+
+    # def update_style(self):
+    #     member_df = pd.read_excel("personnel_info.xlsx")
+    #     gender_condition = (member_df['性别'] == '男')
+    #     campus_condition = (member_df['校区'] == '东校')
+
+    def print_dict(self):
+        print('dict:')
+        print(member_dict)
 
     def mem_info(self):
         workbook = xlrd.open_workbook(self.info_path)
@@ -204,12 +219,38 @@ class PersonManagementWindow(QMainWindow):
             self.file_label.setText(f'选择的文件：{file_name}')
             self.mem_info()
 
+    def make_dict(self):
+        global member_dict
+        for row in range(self.table.rowCount()):
+            key_item = self.table.item(row, 0)
+            value1_item = self.table.item(row, 1)
+            value2_item = self.table.item(row, 2)
+
+            if key_item and value1_item and value2_item:
+                key = key_item.text()
+                value1 = value1_item.text()
+                value2 = value2_item.text()
+
+                if key not in member_dict:
+                    member_dict[key] = []
+
+                # 将第二列和第三列的值作为一个列表项添加到字典中
+                member_dict[key].append([value1, value2])
+        # print(member_dict)
+
     def export_to_excel(self):
         if not os.path.exists('./temp'):
             os.makedirs('./temp')
 
-        workbook = xlwt.Workbook()
-        worksheet = workbook.add_sheet('Sheet1')
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+
+        member_info_list = ['姓名', '性别', '校区']
+
+        s = 0
+        for i in member_info_list:
+            s += 1
+            worksheet[openpyxl.utils.get_column_letter(s) + '1'] = i
 
         for row in range(self.table.rowCount()):
             name_item = self.table.item(row, 0)
@@ -220,15 +261,16 @@ class PersonManagementWindow(QMainWindow):
             gender = gender_item.text()
             campus = campus_item.text()
 
-            worksheet.write(row, 0, name)
-            worksheet.write(row, 1, gender)
-            worksheet.write(row, 2, campus)
+            worksheet['A' + str(row + 2)] = name
+            worksheet['B' + str(row + 2)] = gender
+            worksheet['C' + str(row + 2)] = campus
 
-        workbook.save(f'./temp/memberinfo.xls')
+        workbook.save(f'./temp/member_info.xlsx')
         print(f'数据已成功导出')
 
     def window_close(self):
         self.close()
+
 
 # 主界面
 class FileImporterGUI(QMainWindow):
@@ -321,6 +363,9 @@ class FileImporterGUI(QMainWindow):
 
             spare = create_empty_schedule()
 
+            global member_dict
+            print(member_dict)
+
             for file_name in self.imported_files:
                 workbook = xlrd.open_workbook(file_name)
                 table = workbook.sheet_by_name('Sheet1')
@@ -333,6 +378,9 @@ class FileImporterGUI(QMainWindow):
                     print(name, end=' ')
                 else:
                     logging.error(f"{file_name}表头格式错误，请检查xls文件是否从教务下载")
+
+                info = member_dict.get(name, 'Unknown')
+                print(f'info:{info}')
 
                 date = table.row_values(1)[0][-10:]
                 print(date[-10:])
@@ -370,7 +418,7 @@ class FileImporterGUI(QMainWindow):
                         remaining_list = [x for x in range(1, TOTAL_WEEKS + 1) if x not in int_numbers]
 
                         for week in remaining_list:
-                            spare[week][row][i - 1].append(name + ' ')
+                            spare[week][row][i - 1].append(name)
 
             for i in range(1, TOTAL_WEEKS + 1):
                 print(i)
@@ -378,43 +426,73 @@ class FileImporterGUI(QMainWindow):
                     print(spare[i][j])
 
             for i in range(1, TOTAL_WEEKS + 1):
-                workbook = xlwt.Workbook()
-                worksheet = workbook.add_sheet('Sheet1')
-                worksheet.col(0).width = 3000
-                for j in range(1, 8):
-                    worksheet.col(j).width = 7000
-
-                borders = xlwt.Borders()
-                borders.left = xlwt.Borders.THIN
-                borders.right = xlwt.Borders.THIN
-                borders.top = xlwt.Borders.THIN
-                borders.bottom = xlwt.Borders.THIN
-                style = xlwt.XFStyle()
-                style.borders = borders
-                style.alignment.wrap = 1
+                workbook = xlsxwriter.Workbook(f'{self.output_folder}/第' + str(i) + '周.xlsx')
+                worksheet = workbook.add_worksheet()
+                worksheet.set_column('A:A', 10)
+                worksheet.set_column('B:I', 20)
 
                 weekday = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
                 session = ['第一大节', '第二大节', '第三大节', '第四大节', '晚课']
 
+                s = 1
+                for j in session:
+                    s += 1
+                    worksheet.write('A' + str(s), j)
+
                 s = 0
                 for j in weekday:
                     s += 1
-                    worksheet.write(0, s, j, style)
+                    col = chr(ord('A') + s)
+                    worksheet.write(col + '1', j)
 
-                s = 0
-                for j in session:
-                    s += 1
-                    worksheet.write(s, 0, j, style)
+                worksheet.write('A7', '东校标红,男生加粗')
+                # 东校男生
+                male_east = workbook.add_format({
+                    'underline': 1,
+                    'text_wrap': True,
+                    'color': 'red'
+                })
+
+                # 东校
+                east = workbook.add_format({
+                    'text_wrap': True,
+                    'color': 'red'
+                })
+
+                # 男生
+                male = workbook.add_format({
+                    'underline': 1,
+                    'text_wrap': True,
+                })
 
                 for x in range(0, 5):
                     for y in range(0, 7):
-                        worksheet.write(x + 1, y + 1, spare[i][x][y], style)
-                workbook_path = f'{self.output_folder}/第' + str(i) + '周.xls'
-                workbook.save(workbook_path)
+                        format_text = []
+                        for names in spare[i][x][y]:
+                            info = member_dict.get(names, 'Unknown')
+                            if info:
+                                if info[0][0] == '男' and info[0][1] == '东校':
+                                    format_text.append(male_east)
+                                    format_text.append(names)
+                                elif info[0][1] == '东校':
+                                    format_text.append(east)
+                                    format_text.append(names)
+                                elif info[0][0] == '男':
+                                    format_text.append(male)
+                                    format_text.append(names)
+                                format_text.append(' ')
+                        print(format_text)
+                        if format_text:
+                            worksheet.write_rich_string(x+1, y+1, *format_text)
+                workbook.close()
 
             QMessageBox.information(self, "成功", f"无课表已生成，文件路径: {self.output_folder}")
         except Exception as e:
             QMessageBox.critical(self, "错误", str(e))
+
+    # def personnel_match(self):
+    #     personnel_df = pd.read_excel("./temp/memberinfo.xlsx")
+    #     schedule_df = pd.read_excel("schedule_info.xlsx")
 
 
 def main():
